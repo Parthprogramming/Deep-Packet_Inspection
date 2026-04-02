@@ -485,15 +485,21 @@ static void exportFlowsToCSV(const std::string& filename) {
 int main(int argc, char* argv[]) {
     char errbuf[PCAP_ERRBUF_SIZE];
 
-    // ── Which interface to capture on? ────────────────────────
-    // Usage: sudo ./dpi_engine <interface>
-    // Example: sudo ./dpi_engine eth0
-    //          sudo ./dpi_engine wlan0
-    // Run `ip link show` or `ifconfig` to list your interfaces.
-    
-    const char* interface = argv[1];
+    // ── Interface selection ───────────────────────────────────
+    // Default to "eth0" if no argument given.
+    // On WSL2, eth0 is the virtual Ethernet adapter — it captures
+    // all traffic generated from inside the WSL2 environment
+    // (curl, ping, wget, apt, etc.) but NOT Windows host traffic.
+    //
+    // Usage:
+    //   sudo ./dpi_engine          → captures on eth0 (default)
+    //   sudo ./dpi_engine eth0     → same
+    //   sudo ./dpi_engine lo       → loopback only
+    //   ./dpi_engine -r file.pcap  → read from pcap file (no sudo needed)
+    const char* interface = (argc >= 2) ? argv[1] : "eth0";
+    bool        liveMode  = true;
 
-    // ── Rule thresholds (unchanged) ───────────────────────────
+    // ── Rule thresholds ───────────────────────────────────────
     ruleConfig.beaconingMinPackets     = 50;
     ruleConfig.dnsTunnelingByteLimit   = 512;
     ruleConfig.exfilRatioThreshold     = 3.0;
@@ -505,32 +511,68 @@ int main(int argc, char* argv[]) {
     ruleConfig.xmasScanThreshold       = 1;
 
     loadThreatIntel("../assets/bad_domains.txt", "bad_ips.txt");
-    g_handle = pcap_open_offline("../assets/dpi.pcap",errbuf);
-    if (g_handle == nullptr) {
-        std::cerr << "Error opening interface '" << "any" << "': " << errbuf << "\n";
-        return 1;
+
+    // ── Open capture source ───────────────────────────────────
+    // Two modes depending on the argument:
+    //   -r <file>   → offline pcap file (no sudo, no NAT issues)
+    //   <interface> → live capture from NIC (needs sudo)
+    if (argc >= 3 && std::string(argv[1]) == "-r") {
+        // Offline mode: ./dpi_engine -r dpi.pcap
+        liveMode  = false;
+        interface = argv[2];
+        g_handle  = pcap_open_offline(interface, errbuf);
+        if (!g_handle) {
+            std::cerr << "Error opening pcap file '" << interface
+                      << "': " << errbuf << "\n";
+            return 1;
+        }
+        std::cout << "Mode     : OFFLINE (reading from file)\n";
+        std::cout << "File     : " << interface << "\n";
+
+    } else {
+        // Live mode: sudo ./dpi_engine eth0
+        // pcap_open_live() arguments:
+        //   interface — NIC name ("eth0", "lo", "any")
+        //   65535     — snaplen: capture full packet, nothing truncated
+        //   1         — promiscuous mode ON: see all packets on the wire
+        //               (not just those addressed to this machine)
+        //   1000      — read timeout ms: pcap_loop() wakes up every 1s
+        //               even with no packets — keeps Ctrl+C responsive
+        g_handle = pcap_open_live(interface, 65535, 1, 1000, errbuf);
+        if (!g_handle) {
+            std::cerr << "Error opening interface '" << interface
+                      << "': " << errbuf << "\n";
+            std::cerr << "Hint: run with sudo, or check: ip link show\n";
+            return 1;
+        }
+        std::cout << "Mode     : LIVE capture\n";
+        std::cout << "Interface: " << interface << "\n";
     }
 
-  
+    // ── Register Ctrl+C handler ───────────────────────────────
+    // pcap_breakloop() tells pcap_loop() to stop cleanly after
+    // the current packet. Without this, Ctrl+C kills the process
+    // immediately and the final report and CSV never write.
     signal(SIGINT, onSignal);
 
     int linkType = pcap_datalink(g_handle);
-    std::cout << "Live capture on: " << "any" << "\n";
-    std::cout << "Link type      : " << linkType  << "\n";
-    std::cout << "Ether offset   : " << (
-    (linkType == DLT_NULL || linkType == DLT_LOOP) ? 4 :
-    (linkType == DLT_LINUX_SLL)                    ? 16 :
-    (linkType == 276)                              ? 20 : 14
-) << " bytes\n";
+    std::cout << "Link type: " << linkType << "  |  Ether offset: "
+              << ((linkType == DLT_NULL || linkType == DLT_LOOP) ? 4  :
+                  (linkType == DLT_LINUX_SLL)                    ? 16 :
+                  (linkType == 276)                              ? 20 : 14)
+              << " bytes\n";
 
-    std::cout << "Press Ctrl+C to stop and print the final report.\n\n";
+    if (liveMode)
+        std::cout << "Press Ctrl+C to stop capture and write the report.\n\n";
+    else
+        std::cout << "Reading packets...\n\n";
 
-
-
-    // 0 = capture forever (until Ctrl+C calls pcap_breakloop)
+    // ── Capture loop ──────────────────────────────────────────
+    // 0 = run forever (live) or until end-of-file (offline).
+    // Stops when: file ends (offline), Ctrl+C (live), or error.
     pcap_loop(g_handle, 0, packetHandler, (u_char*)&linkType);
 
-    // ── Everything below this line is unchanged ───────────────
+    // ── Post-capture analysis ─────────────────────────────────
     for (const Alert& a : checkPortScan(ipProfiles, ruleConfig))
         allAlerts.push_back(a);
 
@@ -577,9 +619,10 @@ int main(int argc, char* argv[]) {
     }
 
     if (allAlerts.empty())
-        std::cout << "\n  No anomalies detected in this capture.\n";
+        std::cout << "\n  No anomalies detected.\n";
 
     std::cout << "\n####################################################\n";
+
     exportFlowsToCSV("dpi_report.csv");
     pcap_close(g_handle);
     return 0;
