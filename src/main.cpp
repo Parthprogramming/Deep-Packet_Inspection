@@ -11,6 +11,8 @@
 #include <csignal>  
 #include <fstream>   // for writing the CSV file
 #include <sstream>   // for building CSV field strings safely
+#include <cmath>    // for std::sqrt()
+#include <iomanip>  // for std::fixed, std::setprecision
 
 #include "behavior_engine.h"
 
@@ -26,6 +28,12 @@ std::vector<Alert> allAlerts;
 std::map<std::string, FlowStats>  flowTable;
 std::map<std::string, IPProfile>  ipProfiles;
 RuleConfig                        ruleConfig;
+
+static long long  pktStatCount       = 0;
+static long long  pktStatSum         = 0;
+static long long  pktStatSumSquares  = 0;
+static uint32_t   pktStatMin         = UINT32_MAX;
+static uint32_t   pktStatMax         = 0;
 
 std::string detectApp(const std::string& domain, const std::string& sni = "") {
     const std::string& target = !sni.empty() ? sni : domain;
@@ -201,7 +209,16 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
     else if (linkType == DLT_LINUX_SLL)                    etherOffset = 16;
     else if (linkType == 276)                              etherOffset = 20;
 
+    uint32_t sz = header->len;
+    pktStatCount++;
+    pktStatSum        += sz;
+    pktStatSumSquares += (long long)sz * sz;
+    if (sz < pktStatMin) pktStatMin = sz;
+    if (sz > pktStatMax) pktStatMax = sz;
+
     if (header->caplen < (u_int)(etherOffset + 20)) return;
+
+    
 
     const struct ip* ipHeader = (struct ip*)(packet + etherOffset);
     if (ipHeader->ip_p != IPPROTO_TCP  && ipHeader->ip_p != IPPROTO_UDP  && ipHeader->ip_p != IPPROTO_ICMP) return;
@@ -566,6 +583,22 @@ int main(int argc, char* argv[]) {
         std::cout << "Press Ctrl+C to stop capture and write the report.\n\n";
     else
         std::cout << "Reading packets...\n\n";
+
+    if (pktStatCount > 0) {
+    double avg      = (double)pktStatSum / pktStatCount;
+    double variance = ((double)pktStatSumSquares / pktStatCount) - (avg * avg);
+    double stddev   = std::sqrt(variance);   // add <cmath> to includes
+
+    std::cout << "\n── Packet Size Statistics ──────────────────────\n";
+    std::cout << "  Packets analysed : " << pktStatCount          << "\n";
+    std::cout << "  Min size         : " << pktStatMin << " bytes\n";
+    std::cout << "  Max size         : " << pktStatMax << " bytes\n";
+    std::cout << std::fixed << std::setprecision(2);  // add <iomanip>
+    std::cout << "  Avg size         : " << avg        << " bytes\n";
+    std::cout << "  Variance         : " << variance               << "\n";
+    std::cout << "  Std Deviation    : " << stddev     << " bytes\n";
+    std::cout << "────────────────────────────────────────────────\n";
+}
 
     // ── Capture loop ──────────────────────────────────────────
     // 0 = run forever (live) or until end-of-file (offline).
