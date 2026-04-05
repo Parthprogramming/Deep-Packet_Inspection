@@ -140,3 +140,12 @@ Preloading, ads, trackers, analytics
 → Includes traffic to/from known bad IPs to test IP reputation-based threat detection.
 *test_malicious_domain.pcap*
 → Contains DNS queries to known malicious domains to test domain-based threat intelligence detection.
+
+--------------------------------------------------------------------------------------------------------------
+
+Why variance matters in a DPI engine?
+This isn't just a nice number to print. High variance in packet sizes is a behavioral signal:
+
+Normal web traffic has predictable size patterns (TLS records cluster around 1400 bytes)
+Low variance + high packet rate → beaconing (malware heartbeat, fixed-size keep-alives)
+Bimodal distribution (lots of tiny + lots of huge) → data exfiltration mixed with command channel

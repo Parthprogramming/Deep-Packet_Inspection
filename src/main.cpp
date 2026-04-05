@@ -35,6 +35,16 @@ static long long  pktStatSumSquares  = 0;
 static uint32_t   pktStatMin         = UINT32_MAX;
 static uint32_t   pktStatMax         = 0;
 
+struct FlowSizeAccum {
+    long long count        = 0;
+    long long sum          = 0;
+    long long sumOfSquares = 0;
+    uint32_t  minSize      = UINT32_MAX;
+    uint32_t  maxSize      = 0;
+};
+
+std::map<std::string, FlowSizeAccum> flowSizeStats;
+
 std::string detectApp(const std::string& domain, const std::string& sni = "") {
     const std::string& target = !sni.empty() ? sni : domain;
     if (target.find("youtube")    != std::string::npos) return "YouTube";
@@ -205,9 +215,6 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
 
     int linkType    = *(int*)user;
     int etherOffset = 14;  // default: standard Ethernet II
-    if      (linkType == DLT_NULL || linkType == DLT_LOOP) etherOffset = 4;
-    else if (linkType == DLT_LINUX_SLL)                    etherOffset = 16;
-    else if (linkType == 276)                              etherOffset = 20;
 
     uint32_t sz = header->len;
     pktStatCount++;
@@ -215,6 +222,11 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
     pktStatSumSquares += (long long)sz * sz;
     if (sz < pktStatMin) pktStatMin = sz;
     if (sz > pktStatMax) pktStatMax = sz;
+    
+    if      (linkType == DLT_NULL || linkType == DLT_LOOP) etherOffset = 4;
+    else if (linkType == DLT_LINUX_SLL)                    etherOffset = 16;
+    else if (linkType == 276)                              etherOffset = 20;
+
 
     if (header->caplen < (u_int)(etherOffset + 20)) return;
 
@@ -307,6 +319,14 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
     std::string flowKey = serverIP + ":" + std::to_string(serverPort) + "-"
                         + clientIP + ":" + std::to_string(clientPort);
 
+    FlowSizeAccum& accum = flowSizeStats[flowKey];
+    uint32_t packetSize  = header->len;
+    accum.count++;
+    accum.sum          += packetSize;
+    accum.sumOfSquares += (long long)packetSize * packetSize;
+    if (packetSize < accum.minSize) accum.minSize = packetSize;
+    if (packetSize > accum.maxSize) accum.maxSize = packetSize;
+
     // ── Flow table update ─────────────────────────────────────
     bool isNewFlow = (flowTable.find(flowKey) == flowTable.end());
 
@@ -376,22 +396,35 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
 
     // ── Console output ────────────────────────────────────────
     std::string app = cur.detectedApp.empty() ? "Unknown" : cur.detectedApp;
-    std::cout << "\nApp: " << app << "\n";
-    if (!sni.empty())    std::cout << "TLS SNI: " << sni << "\n";
-    if (!domain.empty()) std::cout << "DNS Query: " << domain << "\n";
-    std::cout << "Packet captured! Length: " << header->len << " bytes\n"
-              << "SRC: " << srcIP  << ":" << srcPort  << "\n"
-              << "DST: " << dstIP  << ":" << dstPort  << "\n"
-              << "Protocol: " << protocol << "\n";
-    if (isNewFlow) std::cout << "New Flow Created!\n";
-    std::cout << "Flow Key: "        << flowKey << "\n"
-              << "Client: "          << clientIP << ":" << clientPort << "\n"
-              << "Server: "          << serverIP << ":" << serverPort << "\n"
-              << "Total Packets: "   << cur.packetCount << "\n"
-              << "Fwd (c->s): "      << cur.forwardPackets
-              << "  Fwd bytes: "     << cur.forwardBytes  << "\n"
-              << "Bwd (s->c): "      << cur.backwardPackets
-              << "  Bwd bytes: "     << cur.backwardBytes << "\n";
+std::cout << "\nApp: " << app << "\n";
+if (!sni.empty())    std::cout << "TLS SNI: " << sni << "\n";
+if (!domain.empty()) std::cout << "DNS Query: " << domain << "\n";
+std::cout << "Packet captured! Length: " << header->len << " bytes\n"
+          << "SRC: " << srcIP  << ":" << srcPort  << "\n"
+          << "DST: " << dstIP  << ":" << dstPort  << "\n"
+          << "Protocol: " << protocol << "\n";
+if (isNewFlow) std::cout << "New Flow Created!\n";
+std::cout << "Flow Key: "      << flowKey << "\n"
+          << "Client: "        << clientIP << ":" << clientPort << "\n"
+          << "Server: "        << serverIP << ":" << serverPort << "\n"
+          << "Total Packets: " << cur.packetCount << "\n"
+          << "Fwd (c->s): "    << cur.forwardPackets
+          << "  Fwd bytes: "   << cur.forwardBytes  << "\n"
+          << "Bwd (s->c): "    << cur.backwardPackets
+          << "  Bwd bytes: "   << cur.backwardBytes << "\n";
+
+    
+    const FlowSizeAccum& accum = flowSizeStats[flowKey];
+    double avg      = (double)accum.sum / accum.count;
+    double variance = ((double)accum.sumOfSquares / accum.count) - (avg * avg);
+    double stddev   = std::sqrt(variance);
+    std::cout << std::fixed << std::setprecision(2)
+              << "Pkt Min: "  << accum.minSize << " bytes"
+              << "  Max: "    << accum.maxSize << " bytes"
+              << "  Avg: "    << avg           << " bytes"
+              << "  Var: "    << variance
+              << "  StdDev: " << stddev        << " bytes\n";
+
 
     // ── Behavioral analysis (existing + Layer 2 TCP flag rules) ─
     std::vector<Alert> alerts = analyzeFlow(cur, header->len, isDNS, isTLS, ruleConfig);
@@ -527,7 +560,7 @@ int main(int argc, char* argv[]) {
     ruleConfig.nullScanThreshold       = 1;
     ruleConfig.xmasScanThreshold       = 1;
 
-    loadThreatIntel("../assets/bad_domains.txt", "bad_ips.txt");
+    loadThreatIntel("../assets/bad_domains.txt", "../assets/bad_ips.txt");
 
     // ── Open capture source ───────────────────────────────────
     // Two modes depending on the argument:
@@ -584,6 +617,11 @@ int main(int argc, char* argv[]) {
     else
         std::cout << "Reading packets...\n\n";
 
+    // ── Capture loop ──────────────────────────────────────────
+    // 0 = run forever (live) or until end-of-file (offline).
+    // Stops when: file ends (offline), Ctrl+C (live), or error.
+    pcap_loop(g_handle, 0, packetHandler, (u_char*)&linkType);
+
     if (pktStatCount > 0) {
     double avg      = (double)pktStatSum / pktStatCount;
     double variance = ((double)pktStatSumSquares / pktStatCount) - (avg * avg);
@@ -599,11 +637,6 @@ int main(int argc, char* argv[]) {
     std::cout << "  Std Deviation    : " << stddev     << " bytes\n";
     std::cout << "────────────────────────────────────────────────\n";
 }
-
-    // ── Capture loop ──────────────────────────────────────────
-    // 0 = run forever (live) or until end-of-file (offline).
-    // Stops when: file ends (offline), Ctrl+C (live), or error.
-    pcap_loop(g_handle, 0, packetHandler, (u_char*)&linkType);
 
     // ── Post-capture analysis ─────────────────────────────────
     for (const Alert& a : checkPortScan(ipProfiles, ruleConfig))

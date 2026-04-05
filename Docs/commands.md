@@ -6,8 +6,18 @@ sudo apt-get install libgtest-dev -y
 //OS Level DPI Engine Deeply integrated into OS To Detect anomalies in the Network 
 
 To Execute the main.cpp : 
-g++ -std=c++17 main.cpp behavior_engine.cpp -lpcap -o dpi_engine
- ./dpi_engine
+g++ -std=c++17 -o ./executables/dpi_engine main.cpp behavior_engine.cpp -lpcap
+
+**(LIVE TRAFFIC)**
+sudo ./dpi_engine eth0 (ethernet)
+sudo ./dpi_engine lo (localhost)
+
+sudo is mandatory in live mode. pcap_open_live() opens a raw socket — the kernel blocks this without root. Without sudo you'll get: "Error opening interface: eth0: You don't have permission"
+
+**(OFFLINE TRAFFIC)**
+
+./executables/dpi_engine -r ../assets/dpi.pcap (pcap file path)
+
 
 --------------------------------------------------------------------------------------------------
 Till Now Captured Packets : 

@@ -351,3 +351,72 @@ The behavior_engine.cpp can detect following attacks from the packets informatio
 *Beaconing (same* flow, perfectly spaced keep-alives like the 35.223.238.178:443 flow with 230+ packets)
 *Asymmetric flows* (forward vs backward ratio way off = data exfiltration)
 *Unknown app on* :443 (encrypted traffic, no SNI detected = suspicious)
+
+
+8) Packet Size Statistics : 
+Collecting Information Like : 
+── Packet Size Statistics ──────────────────────
+  Packets analysed : 7795
+  Min size         : 42 bytes
+  Max size         : 18046 bytes
+  Avg size         : 1414.65 bytes
+  Variance         : 5118841.37
+  Std Deviation    : 2262.49 bytes
+────────────────────────────────────────────────
+
+8️⃣ Why DPI Systems Use Packet Size Statistics
+
+Packet-size patterns reveal network behavior.
+
+Examples:
+
+Port Scanning
+
+Packets are tiny.
+
+Typical stats:
+
+min ≈ 40
+max ≈ 60
+avg ≈ 50
+very low variance
+Video Streaming
+
+Packets are large.
+
+Typical stats:
+
+min ≈ 1300
+max ≈ 1500
+avg ≈ 1400
+low variance
+DNS Tunneling
+
+Packets become abnormally large.
+
+Example:
+
+min ≈ 100
+max ≈ 2000+
+avg ≈ 900
+
+This is suspicious because DNS normally uses very small packets.
+
+Data Exfiltration
+
+You may see:
+
+large packets
+high forward byte ratio
+increasing variance
+9️⃣ Why This Is Valuable for Your DPI
+
+Even without complex ML models, packet size statistics allow you to detect:
+
+abnormal payload sizes
+unusual traffic patterns
+protocol misuse
+stealth scanning
+tunneling
+
+It adds behavioral intelligence to your DPI.
