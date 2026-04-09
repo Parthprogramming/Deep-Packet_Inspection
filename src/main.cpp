@@ -414,7 +414,7 @@ std::cout << "Flow Key: "      << flowKey << "\n"
           << "  Bwd bytes: "   << cur.backwardBytes << "\n";
 
     
-    const FlowSizeAccum& accum = flowSizeStats[flowKey];
+    
     double avg      = (double)accum.sum / accum.count;
     double variance = ((double)accum.sumOfSquares / accum.count) - (avg * avg);
     double stddev   = std::sqrt(variance);
