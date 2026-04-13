@@ -19,12 +19,15 @@ sudo is mandatory in live mode. pcap_open_live() opens a raw socket — the kern
 ./executables/dpi_engine -r ../assets/dpi.pcap (pcap file path)
 
 
+
 **(Creating Venv In Linux)**
 
 sudo apt update
 sudo apt install python3 python3-pip python3-venv
 python3 -m venv .linuxVenv
 source .linuxVenv/bin/activate
+
+
 
 --------------------------------------------------------------------------------------------------
 Till Now Captured Packets : 
@@ -138,6 +141,7 @@ Backward: 1
 
 
 
+
 Example real workflow:
 
 Write code
@@ -147,3 +151,4 @@ CI/CD pipeline builds container
 Deploy to cloud
 Monitor logs
 Scale services
+

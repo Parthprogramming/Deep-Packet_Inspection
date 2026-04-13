@@ -115,7 +115,11 @@ Preloading, ads, trackers, analytics
 
 *Port scanning* (many New Flow Created to same DST IP, different ports)
 *DNS tunneling* (abnormally large DNS packets like 548 bytes)
+
 *Beaconing - Similar Packet Sizes: Rather than a strict 50% split, a more accurate characteristic is that the same payload size or similar packet sizes are repeated over time.
+
+
+*Beaconing (same* flow, perfectly spaced keep-alives like the 35.223.238.178:443 flow with 230+ packets)
 
 *Asymmetric flows* (forward vs backward ratio way off = data exfiltration)
 *Unknown app on* :443 (encrypted traffic, no SNI detected = suspicious)

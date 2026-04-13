@@ -43,6 +43,7 @@ struct FlowSizeAccum {
     uint32_t  maxSize      = 0;
 };
 
+
 // ── TCP Behavioral Metrics (accumulated per flow in main.cpp) ────────────
 // Tracks retransmissions, out-of-order packets, and connection state.
 // Lives here (not in FlowStats) because tcpHeader is only visible in
@@ -348,6 +349,7 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
     if (packetSize < accum.minSize) accum.minSize = packetSize;
     if (packetSize > accum.maxSize) accum.maxSize = packetSize;
 
+
     // ── TCP Behavioral Metrics update ────────────────────────
     // Only runs for TCP packets — tcpHeader is null for UDP/ICMP.
     if (tcpHeader != nullptr) {
@@ -397,6 +399,8 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
         }
     }
 
+
+
     // ── Flow table update ─────────────────────────────────────
     bool isNewFlow = (flowTable.find(flowKey) == flowTable.end());
 
@@ -425,7 +429,10 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
         auto ipAlert1 = checkMaliciousIP(flowTable[flowKey], clientIP);
         if (ipAlert1.has_value()) fireAlert(ipAlert1.value());
 
+
     
+
+
 
         auto ipAlert2 = checkMaliciousIP(flowTable[flowKey], serverIP);
         if (ipAlert2.has_value()) fireAlert(ipAlert2.value());
@@ -466,6 +473,7 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
         if (domainAlert.has_value()) fireAlert(domainAlert.value());
     }
 
+
     PacketSizeStats pktStats;
     if (accum.count > 0) {
         pktStats.count    = accum.count;
@@ -487,6 +495,8 @@ void packetHandler(u_char* user, const struct pcap_pkthdr* header, const u_char*
     static long long printCounter = 0;
 printCounter++;
 if (printCounter % 1000 == 0) {
+
+
     // ── Console output ────────────────────────────────────────
     std::string app = cur.detectedApp.empty() ? "Unknown" : cur.detectedApp;
 std::cout << "\nApp: " << app << "\n";
@@ -519,6 +529,7 @@ std::cout << "Flow Key: "      << flowKey << "\n"
               << "  StdDev: " << stddev        << " bytes\n";
 
 
+
     
 
         // ── TCP Behavioral Metrics console output ─────────────────
@@ -531,11 +542,23 @@ std::cout << "Flow Key: "      << flowKey << "\n"
                   << "  FIN: "               << tb.finCount
                   << "  State: "             << stateStr[tb.connState]
                   << (tb.handshakeComplete ? " [Handshake OK]" : "") << "\n";
+
+    // ── Behavioral analysis (existing + Layer 2 TCP flag rules) ─
+    std::vector<Alert> alerts = analyzeFlow(cur, header->len, isDNS, isTLS, ruleConfig);
+    for (const Alert& a : alerts) fireAlert(a);
+
+    // Port scan check every 10 new flows
+    if (isNewFlow && (ipProfiles.size() % 10 == 0)) {
+        for (const Alert& a : checkPortScan(ipProfiles, ruleConfig)) fireAlert(a);
+
     }
 
     std::cout << "------------------------\n";
 }
+
 }
+
+
 
 
 
@@ -551,11 +574,16 @@ static void exportFlowsToCSV(const std::string& filename) {
     f.seekp(0, std::ios::end);
     if(f.tellp()==0){
         f << "flow_id,src_ip,dst_ip,src_port,dst_port,protocol,"
+
   << "packet_count,fwd_bytes,bwd_bytes,app,sni,domain,"
   << "pkt_min,pkt_max,pkt_avg,pkt_variance,pkt_stddev,"
   << "tcp_retransmissions,tcp_out_of_order,tcp_rst_count,tcp_fin_count,"
   << "tcp_conn_state,tcp_handshake_ok,"
   << "threat,severity,evidence\n";
+
+      << "packet_count,fwd_bytes,bwd_bytes,app,sni,domain,"
+      << "threat,severity,evidence\n";
+
     }
 
     int flowId = 1;
@@ -612,6 +640,7 @@ static void exportFlowsToCSV(const std::string& filename) {
         }
 
         // ── Write one CSV row ─────────────────────────────────
+
         const FlowSizeAccum& acc = flowSizeStats[key];
     double avg = 0.0, variance = 0.0, stddev = 0.0;
     if (acc.count > 0) {
@@ -652,6 +681,23 @@ static void exportFlowsToCSV(const std::string& filename) {
           << csvField(threatStr)                           << ","
           << csvField(severityStr)                         << ","
           << csvField(evidenceStr)                         << "\n";
+
+        f << flowId++                         << ","
+          << csvField(flow.srcIP)             << ","
+          << csvField(flow.dstIP)             << ","
+          << flow.srcPort                     << ","
+          << flow.dstPort                     << ","
+          << csvField(protoName)              << ","
+          << flow.packetCount                 << ","
+          << flow.forwardBytes                << ","
+          << flow.backwardBytes               << ","
+          << csvField(flow.detectedApp)       << ","
+          << csvField(flow.detectedSNI)       << ","
+          << csvField(flow.detectedDomain)    << ","
+          << csvField(threatStr)              << ","
+          << csvField(severityStr)            << ","
+          << csvField(evidenceStr)            << "\n";
+
     }
 
     f.close();
@@ -683,7 +729,11 @@ int main(int argc, char* argv[]) {
     ruleConfig.portScanThreshold       = 10;
     ruleConfig.highPacketRateThreshold = 500;
     ruleConfig.minPacketsForAnalysis   = 3;
+
     ruleConfig.synFloodThreshold       = 10;
+
+    ruleConfig.synFloodThreshold       = 20;
+
     ruleConfig.nullScanThreshold       = 1;
     ruleConfig.xmasScanThreshold       = 1;
 
@@ -715,6 +765,7 @@ int main(int argc, char* argv[]) {
         //               (not just those addressed to this machine)
         //   1000      — read timeout ms: pcap_loop() wakes up every 1s
         //               even with no packets — keeps Ctrl+C responsive
+
         g_handle = pcap_create(interface, errbuf);
 if (!g_handle) {
     std::cerr << "Error creating pcap handle: " << errbuf << "\n";
@@ -730,6 +781,17 @@ if (pcap_activate(g_handle) != 0) {
 }
 std::cout << "Mode     : LIVE capture\n";
 std::cout << "Interface: " << interface << "\n";
+
+        g_handle = pcap_open_live(interface, 65535, 1, 1000, errbuf);
+        if (!g_handle) {
+            std::cerr << "Error opening interface '" << interface
+                      << "': " << errbuf << "\n";
+            std::cerr << "Hint: run with sudo, or check: ip link show\n";
+            return 1;
+        }
+        std::cout << "Mode     : LIVE capture\n";
+        std::cout << "Interface: " << interface << "\n";
+
     }
 
     // ── Register Ctrl+C handler ───────────────────────────────
@@ -775,8 +837,11 @@ std::cout << "Interface: " << interface << "\n";
     for (const Alert& a : checkPortScan(ipProfiles, ruleConfig))
         allAlerts.push_back(a);
 
+
     for (const Alert& a : checkSYNFlood(flowTable, ipProfiles, ruleConfig))
         allAlerts.push_back(a);
+
+
 
     int dangerCount = 0, suspiciousCount = 0;
     for (const Alert& a : allAlerts) {

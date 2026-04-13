@@ -186,13 +186,18 @@ void printAlert(const Alert& alert) {
 
 static std::optional<Alert> checkDNSTunneling(
     const FlowStats& flow, int packetSizeBytes,
+
     bool isDNS, const RuleConfig& config,
     const PacketSizeStats& pktStats)
+
+    bool isDNS, const RuleConfig& config)
+
 {
     if (!isDNS) return std::nullopt;
     if (packetSizeBytes <= config.dnsTunnelingByteLimit) return std::nullopt;
     std::string dedupKey = flow.srcIP + "-" + flow.dstIP + "-dns";
     if (hasAlreadyFired(dedupKey, AlertType::DNS_TUNNELING)) return std::nullopt;
+
 
     // Packet size reinforcement:
     // Normal DNS: avg ≈ 60–120B, low variance.
@@ -218,6 +223,18 @@ static std::optional<Alert> checkDNSTunneling(
         << " | Avg=" << (int)pktStats.avg << "B"
         << " | Var=" << (int)pktStats.variance
         << " | StdDev=" << (int)pktStats.stddev << "B";
+
+    Alert a;
+    a.type     = AlertType::DNS_TUNNELING;
+    a.severity = Severity::SUSPICIOUS;
+    a.flowKey  = flow.srcIP + " -> " + flow.dstIP;
+    a.srcIP    = flow.srcIP;  a.dstIP  = flow.dstIP;
+    a.srcPort  = flow.srcPort; a.dstPort = flow.dstPort;
+    a.message  = "DNS packet is abnormally large. Possible DNS tunneling — "
+                 "data encoded inside DNS to evade firewall inspection.";
+    std::ostringstream oss;
+    oss << "Size=" << packetSizeBytes << "B (limit: " << config.dnsTunnelingByteLimit << "B)";
+
     if (!flow.detectedDomain.empty()) oss << " | Domain: " << flow.detectedDomain;
     a.evidence = oss.str();
     markAsFired(dedupKey, AlertType::DNS_TUNNELING);
@@ -231,6 +248,7 @@ static std::optional<Alert> checkBeaconing(
     double fwdRatio = (double)flow.forwardPackets / flow.packetCount;
     if (fwdRatio < config.beaconingRatioMin || fwdRatio > config.beaconingRatioMax)
         return std::nullopt;
+
     
     // ── EXCLUDE SYN FLOODS ─────────────────────────────────────
     // SYN floods have high packet counts with asymmetric forward/backward
@@ -248,6 +266,7 @@ static std::optional<Alert> checkBeaconing(
     if (flow.finCount > 0 && !flow.synAckSeen && flow.synCount == 0) 
         return std::nullopt;
     
+
     std::string dk = makeDedupKey(flow);
     if (hasAlreadyFired(dk, AlertType::BEACONING)) return std::nullopt;
 
@@ -269,8 +288,12 @@ static std::optional<Alert> checkBeaconing(
 }
 
 static std::optional<Alert> checkDataExfiltration(
+
     const FlowStats& flow, const RuleConfig& config,
     const PacketSizeStats& pktStats)
+
+    const FlowStats& flow, const RuleConfig& config)
+
 {
     if (flow.packetCount < config.minPacketsForAnalysis)       return std::nullopt;
     if (flow.forwardBytes  < config.minBytesBeforeExfilCheck)  return std::nullopt;
@@ -279,6 +302,7 @@ static std::optional<Alert> checkDataExfiltration(
     if (ratio < config.exfilRatioThreshold) return std::nullopt;
     std::string dk = makeDedupKey(flow);
     if (hasAlreadyFired(dk, AlertType::DATA_EXFILTRATION)) return std::nullopt;
+
 
     // Packet size reinforcement:
     // Exfiltration: attacker sends large packets stuffed with stolen data.
@@ -307,6 +331,20 @@ static std::optional<Alert> checkDataExfiltration(
         << " | PktMax=" << pktStats.maxSize << "B"
         << " | PktVar=" << (int)pktStats.variance
         << " | PktAvg=" << (int)pktStats.avg << "B";
+
+    Alert a;
+    a.type     = AlertType::DATA_EXFILTRATION;
+    a.severity = (ratio > config.exfilRatioThreshold * 3) ? Severity::DANGER : Severity::SUSPICIOUS;
+    a.flowKey  = flow.srcIP + " -> " + flow.dstIP;
+    a.srcIP    = flow.srcIP;  a.dstIP  = flow.dstIP;
+    a.srcPort  = flow.srcPort; a.dstPort = flow.dstPort;
+    a.message  = "Device sending far more data than receiving after handshake. "
+                 "Asymmetry suggests data upload or exfiltration.";
+    std::ostringstream oss;
+    oss << "Fwd=" << flow.forwardBytes << "B | Bwd=" << flow.backwardBytes
+        << "B | Ratio=" << (int)ratio << "x (threshold: "
+        << (int)config.exfilRatioThreshold << "x)";
+
     a.evidence = oss.str();
     markAsFired(dk, AlertType::DATA_EXFILTRATION);
     return a;
@@ -686,6 +724,7 @@ void updateIPProfile(
     profile.dstPortsContacted[dstKey]++;
 }
 
+
 std::vector<Alert> checkSYNFlood(
     const std::map<std::string, FlowStats>& flowTable,
     const std::map<std::string, IPProfile>& profiles,
@@ -753,6 +792,7 @@ std::vector<Alert> checkSYNFlood(
     return alerts;
 }
 
+
 std::vector<Alert> checkPortScan(
     const std::map<std::string, IPProfile>& profiles,
     const RuleConfig& config)
@@ -786,8 +826,12 @@ std::vector<Alert> analyzeFlow(
     int              packetSizeBytes,
     bool             isDNS,
     bool             isTLS,
+
     const RuleConfig& config,
     const PacketSizeStats& pktStats)
+
+    const RuleConfig& config)
+
 {
     std::vector<Alert> alerts;
 
@@ -797,13 +841,21 @@ std::vector<Alert> analyzeFlow(
     // All other rules need enough packets to be statistically meaningful.
     if (flow.packetCount < config.minPacketsForAnalysis) return alerts;
 
+
     auto r1 = checkDNSTunneling(flow, packetSizeBytes, isDNS, config, pktStats);
+
+    auto r1 = checkDNSTunneling(flow, packetSizeBytes, isDNS, config);
+
     if (r1.has_value()) alerts.push_back(r1.value());
 
     auto r2 = checkBeaconing(flow, config);
     if (r2.has_value()) alerts.push_back(r2.value());
 
+
     auto r3 = checkDataExfiltration(flow, config, pktStats);
+
+    auto r3 = checkDataExfiltration(flow, config);
+
     if (r3.has_value()) alerts.push_back(r3.value());
 
     auto r4 = checkUnknownTLS(flow, isTLS, config);

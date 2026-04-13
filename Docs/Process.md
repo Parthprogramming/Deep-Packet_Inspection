@@ -419,6 +419,7 @@ protocol misuse
 stealth scanning
 tunneling
 
+
 It adds behavioral intelligence to your DPI.
 
 
@@ -547,3 +548,6 @@ RST instead of FIN
 Useful for:
  SYN flood detection 
  abnormal session termination
+
+It adds behavioral intelligence to your DPI.
+

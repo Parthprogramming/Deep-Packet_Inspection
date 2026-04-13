@@ -151,6 +151,7 @@ std::optional<Alert> checkMaliciousIP(
     const std::string& ip
 );
 
+
 struct PacketSizeStats {
     uint32_t minSize  = 0;
     uint32_t maxSize  = 0;
@@ -165,6 +166,14 @@ std::vector<Alert> analyzeFlow(
     bool isDNS, bool isTLS,
     const RuleConfig& config,
     const PacketSizeStats& pktStats
+
+std::vector<Alert> analyzeFlow(
+    const FlowStats& flow,
+    int              packetSizeBytes,
+    bool             isDNS,
+    bool             isTLS,
+    const RuleConfig& config
+
 );
 
 void updateIPProfile(
@@ -173,18 +182,25 @@ void updateIPProfile(
 );
 
 
+
 std::vector<Alert> checkSYNFlood(
     const std::map<std::string, FlowStats>& flowTable,
     const std::map<std::string, IPProfile>& profiles,
     const RuleConfig& config);
     
+
+
 std::vector<Alert> checkPortScan(
     const std::map<std::string, IPProfile>& profiles,
     const RuleConfig& config
 );
+
 
 void resetFiredAlerts();
 
 // ── Packet size statistics passed from main.cpp into analyzeFlow() ──────
 // Computed from FlowSizeAccum; passed by value so behavior_engine
 // has no dependency on main.cpp internals.
+
+void resetFiredAlerts();
+
